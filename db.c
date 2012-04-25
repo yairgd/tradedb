@@ -9,12 +9,21 @@
 #define SET_BIT(data_bit,i)  (((unsigned char *)(data_bit))[ (i)>>3 ])|= (1<<( 7 -(i%8)) )
 
  static FileRecord fileRecords[MAX_OPEN_FILES];
- static Field *workingFields[WORKING_FIELDS];
+// static Field *workingFields[WORKING_FIELDS];
+ static WorkingFields workingFields[WORKING_FIELDS];
  static int errID;
  static void *g_buffer;
 
 // char DBField_Free(Field *field);
 // char DBFile_Init(File *file);
+//
+WorkingFields *GetWorkingField(int idx)
+{
+	if (idx<WORKING_FIELDS)
+		return &workingFields[idx];
+	else
+		return 0;
+}
  unsigned int FileRecord_HashCoding(char  *str)
 {
    // RSHsh  http://wizardsoweb.com/rs-hashing-algorithm-and-program/2011/05/
@@ -38,7 +47,7 @@
 	int i;
 	for (i = 0;i<MAX_OPEN_FILES;i++)
 	{
-		if (fileRecords[i].file.header.id==id)
+		if (fileRecords[i].table.header.id==id)
 			return i;
 	}
 	return -1;
@@ -49,7 +58,7 @@
 	int i;
 	for (i = 0;i<MAX_OPEN_FILES;i++)
 	{
-		if (fileRecords[i].file.header.id==FileRecord_HashCoding(str))
+		if (fileRecords[i].table.header.id==FileRecord_HashCoding(str))
 			return i;
 	}
 	return -1;
@@ -60,18 +69,30 @@
 	int i;
 	for (i = 0; i<MAX_OPEN_FILES;i++)
 	{
-		if (fileRecords[i].file.header.id==-1)
+		if (fileRecords[i].table.header.id==-1)
 			return i;
 	}
 	return -1;
 }
 
 
- int DBFile_GetFirstEntry(File *file)
+ int DBTable_GetFirstEntry(Table *table)
 {
 	int tot_length = sizeof(Header);
-	tot_length+= file->header.nFields * sizeof(Field);
+	tot_length+= table->header.nFields * sizeof(Field);
 	return tot_length;
+}
+
+FileRecord *DBFileRecord_GetRecord(FILE_ID fileid)
+{
+	int i;
+	if ((i=FileRecord_GetIndexByID(fileid)<0))
+	{
+		DB_SetLastError(0);
+		return NULL;
+	}
+	return &fileRecords[i];
+	
 }
 
  char DBFileRecord_SetPointer(FileRecord *fileRecord, int fileP)
@@ -82,14 +103,14 @@
 	// calcaulte number of rows in the current file
 	fseek(fileRecord->fP, 0L, SEEK_END); 
 	sz = ftell(fileRecord->fP);
-	sz -= DBFile_GetFirstEntry(&fileRecord->file);
-	sz /= fileRecord->file.header.nFields;
+	sz -= DBTable_GetFirstEntry(&fileRecord->table);
+	sz /= fileRecord->table.header.nFields;
 
 	// check if adding rows is neccesery
 	nRows = fileP - sz; 
 	if (nRows>=0)
 	{
-		fileRecord->file.header.totalRecords+=nRows;
+		fileRecord->table.header.totalRecords+=nRows;
 		DBFileRecord_AddZeroRows(fileRecord,nRows);
 	}
 	
@@ -106,30 +127,20 @@
 {
 	int i;
 	int fileCursor;
-	
+	int n=0;
 	// set the file cursor
-	fileCursor =  fileRecord->filePointer*fileRecord->file.row_length;
-	int n;
-	if (fileRecord->filePointer>HALF_BUFFER_SIZE)
-	{
-		fileCursor -= HALF_BUFFER_SIZE*fileRecord->file.row_length;
-		n = 0;
-	}
-	else
-	{
-		fileCursor = 0;
-		n = HALF_BUFFER_SIZE - fileRecord->filePointer ;
-	}
-	fileCursor += 	DBFile_GetFirstEntry(&fileRecord->file);
+	fileCursor =  fileRecord->filePointer*fileRecord->table.row_length;
+	// add the header in to account
+	fileCursor += 	DBTable_GetFirstEntry(&fileRecord->table);
 
 	// read buffer to memory
 	fseek ( fileRecord->fP, fileCursor , SEEK_SET);
-	fread (g_buffer+6*n,sizeof(char)*fileRecord->file.row_length,BUFFER_SIZE,fileRecord->fP);  
+	fread (g_buffer+(fileRecord->table.row_length)*n,sizeof(char)*fileRecord->table.row_length,BUFFER_SIZE,fileRecord->fP);
 
 	// fetch data from file to curre
 	for (i=0;i<BUFFER_SIZE;i++)
 	{
-		DBFile_ReadRow(	&fileRecord->file,i  );
+		DBTable_ReadRow(&fileRecord->table,i  );
 	}
 	DB_SetLastError(0);
 	return OK;
@@ -137,34 +148,39 @@
 
 }
 
- char DBFile_ReadRow(File *file,int i_g_buffer)
+
+
+
+
+
+ char DBTable_ReadRow(Table *table,int i_g_buffer)
 {
 	int i;
 	int tot_length=0;
 	int field_length;
-	void *row = (g_buffer+file->row_length*i_g_buffer);
-	for (i=0;i<file->header.nFields;i++)
+	void *row = (g_buffer+table->row_length*i_g_buffer);
+	for (i=0;i<table->header.nFields;i++)
 	{
-		field_length = file->fields[i]->length;
+		field_length = table->fields[i]->length;
 		switch (field_length-1)
 		{
 			case DB_LEN8:
-				file->fields[i]->buffer[i_g_buffer]=*((char  *)(row+tot_length));
+				table->fields[i]->buffer[i_g_buffer]=*((char  *)(row+tot_length));
 				tot_length+=1;
 			break;
 
 			case DB_LEN16:
-				file->fields[i]->buffer[i_g_buffer] = *((short  *)(row+tot_length));
+				table->fields[i]->buffer[i_g_buffer] = *((short  *)(row+tot_length));
 				tot_length+=2;
 			break;
 
 			case DB_LEN32:
-				file->fields[i]->buffer[i_g_buffer] = *((int  *)(row+tot_length));
+				table->fields[i]->buffer[i_g_buffer] = *((int  *)(row+tot_length));
 				tot_length+=3;
 			break;
 
 			case DB_LEN64:		
-				file->fields[i]->buffer[i_g_buffer] = *((long  *)(row+tot_length));
+				table->fields[i]->buffer[i_g_buffer] = *((long  *)(row+tot_length));
 				tot_length+=4;
 			break;
 				
@@ -177,10 +193,12 @@
 
 }
 
-int DB_WriteColumn(int workingFieldIdx,float *buffer,int buffer_size,int bufferPlace)
+int DB_WriteColumn_old(int workingFieldIdx,float *buffer,int buffer_size,int bufferPlace)
 {
 	int i;
-	Field *field = workingFields[workingFieldIdx];
+	Field *field = workingFields[workingFieldIdx].field;
+//	FileRecord *fileRecord =  workingFields[workingFieldIdx].fileRecord;
+//	int ref = 0;
 	for (i=0;i<buffer_size;i++)
 //	for (i=0;i<buffer_size && bufferPlace+i+HALF_BUFFER_SIZE>0 && bufferPlace+i+HALF_BUFFER_SIZE<BUFFER_SIZE ;i++)
 	{
@@ -188,16 +206,22 @@ int DB_WriteColumn(int workingFieldIdx,float *buffer,int buffer_size,int bufferP
 		if (bufferPlace+i>HALF_BUFFER_SIZE)
 		{
 			// set file rpointer
+		//	DBFileRecord_WriteBuffer(fileRecord);
+		//	DBFileRecord_SetPointer(fileRecord,fileRecord->filePointer+BUFFER_SIZE);
+		//	ref+=BUFFER_SIZE;
+		//	DB_SetFilePointer(fileid,
+			return i;
 		}
 		if (bufferPlace+i<-HALF_BUFFER_SIZE)
 		{
 			// set file rpointer
-		}
+			return i;
 
+		}
 
 		field->buffer[bufferPlace+i+HALF_BUFFER_SIZE] = buffer[i];
 	}
-	return buffer_size-i;
+	return i;
 //	if (i!=buffer_size)
 //	{
 //		printf("error line %d at file %s: buffer out of range",__LINE__,__FILE__);
@@ -206,10 +230,93 @@ int DB_WriteColumn(int workingFieldIdx,float *buffer,int buffer_size,int bufferP
 //	return ERR;
 }
 
- int DB_ReadColumn(int workingFieldIdx,float *buffer,int buffer_size,int bufferPlace)
+int DB_WriteColumn(int workingFieldIdx,float *buffer,int buffer_length,int filePointer)
+{
+	int bufferPlace ;
+	int nWrite;
+//	int idx = 0;
+	int n=0;
+	WorkingFields *workField;
+	// get working field
+	workField = &workingFields[workingFieldIdx];
+	while (1)
+	{
+
+		if ( (filePointer - workField->fileRecord->filePointer>HALF_BUFFER_SIZE)
+		|| (filePointer - workField->fileRecord->filePointer<-HALF_BUFFER_SIZE))
+		{
+			// flash current buffer
+			DBFileRecord_WriteBuffer(workField->fileRecord);
+			// set new file pointer 
+			DBFileRecord_SetPointer(workField->fileRecord,filePointer);
+			// read new buffer
+			DBFileRecord_ReadBuffer(workField->fileRecord);
+		
+		}
+
+		// set buffer place
+		bufferPlace = filePointer - workField->fileRecord->filePointer-HALF_BUFFER_SIZE;
+
+		
+		// write to buffer
+		nWrite = DBField_WriteBuffer(workField->field,buffer+n,buffer_length-n,bufferPlace);
+
+		n+=nWrite;
+
+		if (n>=buffer_length)
+			break;
+
+		filePointer+=BUFFER_SIZE;
+
+	}
+
+}
+
+int DB_ReadColumn(int workingFieldIdx,float *buffer,int buffer_length,int filePointer)
+{
+	int bufferPlace ;
+	int nWrite;
+	int n=0;
+	WorkingFields *workField;
+	// get working field
+	workField = &workingFields[workingFieldIdx];
+	while (1)
+	{
+
+		if ( (filePointer - workField->fileRecord->filePointer>HALF_BUFFER_SIZE)
+		|| (filePointer - workField->fileRecord->filePointer<-HALF_BUFFER_SIZE))
+		{
+			// flash current buffer
+			DBFileRecord_WriteBuffer(workField->fileRecord);
+			// set new file pointer 
+			DBFileRecord_SetPointer(workField->fileRecord,filePointer);
+			// read new buffer
+			DBFileRecord_ReadBuffer(workField->fileRecord);
+		
+		}
+
+		// set buffer place
+		bufferPlace = filePointer - workField->fileRecord->filePointer-HALF_BUFFER_SIZE;
+
+		
+		// write to buffer
+		nWrite = DBField_ReadBuffer(workField->field,buffer+n,buffer_length-n,bufferPlace);
+
+		n+=nWrite;
+		if (n>=buffer_length)
+			break;
+
+		filePointer+=BUFFER_SIZE;
+
+	}
+
+}
+
+
+ int DB_ReadColumn_old(int workingFieldIdx,float *buffer,int buffer_size,int bufferPlace)
 {
 	int i;
-	Field *field = workingFields[workingFieldIdx];
+	Field *field = workingFields[workingFieldIdx].field;
 //	for (i=0;i<buffer_size && bufferPlace+i+HALF_BUFFER_SIZE>0 && bufferPlace+i+HALF_BUFFER_SIZE<BUFFER_SIZE ;i++)
 //		buffer[i] = field->buffer[bufferPlace+i+HALF_BUFFER_SIZE] ;
 //
@@ -243,7 +350,7 @@ int DB_WriteColumn(int workingFieldIdx,float *buffer,int buffer_size,int bufferP
 char DB_SetColumn(FILE_ID fileid,char *fieldName,int workingFieldIdx)
 {
 	Field *field;
-	File *file;
+	Table *table;
 	int i;
 	
 	if  ( (i = FileRecord_GetIndexByID(fileid))<0)
@@ -252,15 +359,17 @@ char DB_SetColumn(FILE_ID fileid,char *fieldName,int workingFieldIdx)
 		return ERR;
 	}
 	
-	file = &fileRecords[i].file;
+	table = &fileRecords[i].table;
 
-	if  ( !(field = DBFile_GetFieldByName (file,fieldName)))
+	if  ( !(field = DBTable_GetFieldByName (table,fieldName)))
 	{
 		DB_SetLastError(0);
 		return ERR;
 	}	
 	
-	workingFields[workingFieldIdx]=field;
+	workingFields[workingFieldIdx].field=field;
+	workingFields[workingFieldIdx].fileRecord = &fileRecords[i];
+
 	
 
 	DB_SetLastError(0);
@@ -279,6 +388,8 @@ char DB_SetFilePointer(FILE_ID fileid,int fileP)
 	
 }
 
+
+
 char DB_ReadBuffer(FILE_ID fileid)
 {
 	int i;
@@ -290,6 +401,7 @@ char DB_ReadBuffer(FILE_ID fileid)
 	return DBFileRecord_ReadBuffer(&fileRecords[i]);
 	
 }
+/*
 char DB_WriteBuffer(FILE_ID fileid)
 {
 	int i;
@@ -300,44 +412,33 @@ char DB_WriteBuffer(FILE_ID fileid)
 	}
 	return DBFileRecord_WriteBuffer(&fileRecords[i]);
 	
-}
+}*/
+
  char DBFileRecord_WriteBuffer(FileRecord *fileRecord)
 {
 
 	int i;
 	int fileCursor;
-	int n;
+	int n=0;
 	
 	// set data in buffer
 	for (i=0;i<BUFFER_SIZE;i++)
 	{
-		DBFile_WriteRow(&fileRecord->file, i );
+		DBTable_WriteRow(&fileRecord->table, i );
 	}
-
 
 	// calculate file cursor
-	fileCursor =  fileRecord->filePointer*fileRecord->file.row_length;
-	if (fileRecord->filePointer>HALF_BUFFER_SIZE)
-	{
-		fileCursor -= HALF_BUFFER_SIZE*fileRecord->file.row_length;
-		n = 0;
-	}
-	else
-	{
-		fileCursor = 0;
-		n = HALF_BUFFER_SIZE - fileRecord->filePointer ;
-	}
-	fileCursor += 	DBFile_GetFirstEntry(&fileRecord->file);
+	fileCursor =  fileRecord->filePointer*fileRecord->table.row_length;
 
-
+	// take heder into account
+	fileCursor += 	DBTable_GetFirstEntry(&fileRecord->table);
 
 	// write buffer to file
 	fseek ( fileRecord->fP, fileCursor , SEEK_SET);
-	n = fwrite (g_buffer+6*n,sizeof(char)*fileRecord->file.row_length,BUFFER_SIZE-n,fileRecord->fP);
+	n = fwrite (g_buffer+(fileRecord->table.row_length)*n,sizeof(char)*fileRecord->table.row_length,BUFFER_SIZE-n,fileRecord->fP);
 
 	DB_SetLastError(0);
 	return OK;
-
 
 }
 
@@ -355,10 +456,10 @@ void DB_Init()
 	g_buffer = malloc(1e6);
 	for ( i=0;i<MAX_OPEN_FILES;i++)
 	{
-		fileRecords[i].file.header.id=-1;
+		fileRecords[i].table.header.id=-1;
 	}
 	for (i = 0; i <WORKING_FIELDS;i++)
-		workingFields[0]=0;
+		workingFields[0].field=0;
 	
 }
 char DB_Finalize()
@@ -370,14 +471,18 @@ char DB_Finalize()
 }
 
 
-char DB_Close(int hashCode)
+char DB_Close(unsigned int hashCode)
 {
 	int i;//,j,k;
 	if ( (i=FileRecord_GetIndexByID(hashCode))>-1)
 	{
+		// flash current buffer
+		DBFileRecord_WriteBuffer(&fileRecords[i]);
+
+		// close file
 		fclose(fileRecords[i].fP);
-		fileRecords[i].file.header.id = -1;
-		DBFile_Free(&fileRecords[i].file);
+		fileRecords[i].table.header.id = -1;
+		DBTable_Free(&fileRecords[i].table);
 		DB_SetLastError(0);
 		return OK;
 	}
@@ -399,7 +504,7 @@ Header * DB_GetHeader(unsigned int hashCode)
 	}
 
 	DB_SetLastError(0);
-	return &fileRecords[i].file.header;
+	return &fileRecords[i].table.header;
 
 }
 
@@ -408,8 +513,8 @@ char DBField_Free(Field *field)
 	int i;
 	// remove field from working fields list
 	for (i = 0; i<WORKING_FIELDS;i++)
-		if (workingFields[i]==field)
-			workingFields[i]=NULL;
+		if (workingFields[i].field==field)
+			workingFields[i].field=NULL;
 
 	// free buffer and fields
 	if (field->buffer)
@@ -426,9 +531,9 @@ Field * DBField_GetByName(unsigned int fileID,char *name)
 	
 		for (i=0;i<MAX_FIELDS;i++)
 		{
-			if (fileRecords[fileIndex].file.fields[i]->id==FileRecord_HashCoding(name))
+			if (fileRecords[fileIndex].table.fields[i]->id==FileRecord_HashCoding(name))
 			{
-				return fileRecords[fileIndex].file.fields[i];
+				return fileRecords[fileIndex].table.fields[i];
 			}
 		}
 	}
@@ -440,15 +545,59 @@ Field * DBField_GetByIndex(unsigned int fileID,int idx)
 	if  ( (fileIndex = FileRecord_GetIndexByID (fileID))>-1)
 	{
 		
-		if (idx < fileRecords[fileIndex].file.header.nFields)
+		if (idx < fileRecords[fileIndex].table.header.nFields)
 		{
-			return fileRecords[fileIndex].file.fields[idx];
+			return fileRecords[fileIndex].table.fields[idx];
 		}
 		
 	}
 	return 0;
 }
 
+int DBField_WriteBuffer(Field *field,float *buffer,int buffer_size,int bufferPlace)
+{
+	int i;
+	for (i=0;i<buffer_size;i++)
+	{
+
+		if (bufferPlace+i>HALF_BUFFER_SIZE)
+		{
+			return i;
+		}
+		if (bufferPlace+i<-HALF_BUFFER_SIZE)
+		{
+			// set file rpointer
+			return i;
+
+		}
+
+		field->buffer[bufferPlace+i+HALF_BUFFER_SIZE] = buffer[i];
+	}
+	return i;
+}
+
+int DBField_ReadBuffer(Field *field,float *buffer,int buffer_size,int bufferPlace)
+{
+	int i;
+	for (i=0;i<buffer_size;i++)
+	{
+
+		if (bufferPlace+i>HALF_BUFFER_SIZE)
+		{
+			// set file rpointer
+			return i;
+		}
+		if (bufferPlace+i<-HALF_BUFFER_SIZE)
+		{
+			// set file rpointer
+			return i;
+		}
+
+		buffer[i] = (field->buffer[bufferPlace+i+HALF_BUFFER_SIZE]);///pow(10,field->mantisa);
+	}
+
+	return i;
+}
 
 
 
@@ -474,22 +623,24 @@ unsigned int DB_Open(char *filename)
 	f=fopen(filename,"rb+");  
 	if (f)
 	{
-	    fileRecords[fileIndex].file.header.id = FileRecord_HashCoding(filename);
+	    fileRecords[fileIndex].table.header.id = FileRecord_HashCoding(filename);
 	    fileRecords[fileIndex].fP = f;
-	    fileRecords[fileIndex].file.header.totalRecords = 0;
+	    fileRecords[fileIndex].table.header.totalRecords = 0;
 
 	    DBFileRecord_ReadHeader(&fileRecords[fileIndex]);
 
 	    DBFileRecord_ReadFields(&fileRecords[fileIndex]);
 
-	    DBFile_Init(&fileRecords[fileIndex].file);
+	    DBTable_Init(&fileRecords[fileIndex].table);
 	   	
 	    DBFileRecord_SetPointer(&fileRecords[fileIndex],0);
+
+	    DBFileRecord_ReadBuffer(&fileRecords[fileIndex]);
 
 	
 	    DB_SetLastError(0);
 
-	    return fileRecords[fileIndex].file.header.id ;
+	    return fileRecords[fileIndex].table.header.id ;
 	}
 	else
 	{
@@ -501,16 +652,16 @@ unsigned int DB_Open(char *filename)
 
 }
 
- char DBFile_Init(File *file)
+ char DBTable_Init(Table *table)
 {
 // set field buffer
 	int i;
 	int tot_length = 0;
-	for (i = 0; i<file->header.nFields;i++)
+	for (i = 0; i<table->header.nFields;i++)
 	{
 	   
-		DBField_Init(file->fields[i]);
-		switch (file->fields[i]->length-1)
+		DBField_Init(table->fields[i]);
+		switch (table->fields[i]->length-1)
 		{
 			case DB_LEN8:
 				tot_length+=1;
@@ -528,18 +679,18 @@ unsigned int DB_Open(char *filename)
 
 		}
 	}
-	file->row_length = tot_length;
+	table->row_length = tot_length;
 	DB_SetLastError(0);
 	return OK;
 }
 
- char DBFile_Free(File *file)
+ char DBTable_Free(Table *table)
 {
 
 	int i;
-	for (i = 0; i<file->header.nFields;i++)
+	for (i = 0; i<table->header.nFields;i++)
 	   {
-		DBField_Free(file->fields[i]);
+		DBField_Free(table->fields[i]);
   	   }
 	DB_SetLastError(0);
 	return OK;
@@ -578,12 +729,12 @@ unsigned int DB_Create(char *filename)
 	f=fopen(filename,"wb+");  
 	if (f)
 	{
-	    fileRecords[fileIndex].file.header.id = FileRecord_HashCoding(filename);
+	    fileRecords[fileIndex].table.header.id = FileRecord_HashCoding(filename);
 	    fileRecords[fileIndex].fP = f;
-	    fileRecords[fileIndex].file.header.totalRecords = 0;
+	    fileRecords[fileIndex].table.header.totalRecords = 0;
 //	   	    DBFileRecord_SetPointer(0);
 	    DB_SetLastError(0);
-	    return fileRecords[fileIndex].file.header.id ;
+	    return fileRecords[fileIndex].table.header.id ;
 	}
 	else
 	{
@@ -597,13 +748,13 @@ unsigned int DB_Create(char *filename)
 
 
 
- Field * DBFile_GetFieldByName(File *file,char *fileName)
+ Field * DBTable_GetFieldByName(Table *table,char *fileName)
 {
 	int i;
-	for (i=0;i<file->header.nFields;i++)
+	for (i=0;i<table->header.nFields;i++)
 	{
-		if (strcmp(fileName,file->fields[i]->name)==0)
-			return file->fields[i];
+		if (strcmp(fileName,table->fields[i]->name)==0)
+			return table->fields[i];
 		
 	}
 	return NULL;
@@ -614,63 +765,63 @@ unsigned int DB_Create(char *filename)
 //	return 0;
 //}
 
-char DBFile_SetTime(int hashCode, Time time)
+/*char DBFile_SetTime(int hashCode, Time time)
 {
 	Header header;
 	header.initialTime=time;
 	return 0;
 }
-
+*/
 
  char DBFileRecord_AddZeroRows(FileRecord *fileRecord,int nRows)
 {
 	int firstEntry,i;
-	DBFile_SetZeros(&fileRecord->file);
-	firstEntry = DBFile_GetFirstEntry(&fileRecord->file);
+	DBTable_SetZeros(&fileRecord->table);
+	firstEntry = DBTable_GetFirstEntry(&fileRecord->table);
 	fseek ( fileRecord->fP, firstEntry , SEEK_SET);
 	for (i = 0 ; i<nRows; i++)		
-		fwrite(&fileRecord->file.header,sizeof(char),fileRecord->file.row_length,fileRecord->fP);  
+		fwrite(&fileRecord->table.header,sizeof(char),fileRecord->table.row_length,fileRecord->fP);  
 	return OK;
 }
 
- void DBFile_SetZeros(File *file)
+void DBTable_SetZeros(Table *table)
 {
 	int i;
 	void *row = g_buffer;
-	for (i=0;i<file->row_length;i++)
+	for (i=0;i<table->row_length;i++)
 		((char *)row)[i]=0;
 }
 
- char DBFile_WriteRow(File *file,int n)
+char DBTable_WriteRow(Table *table,int n)
 {
 	int i=0;
 	int field_length ;//= (file->fields->numFormat&0xf0)>>4;
 	int tot_length =0;
-	void *row = (g_buffer+n*file->row_length);
-	for (i=0;i<file->header.nFields;i++)
+	void *row = (g_buffer+n*table->row_length);
+	for (i=0;i<table->header.nFields;i++)
 	{
 		
-		field_length = file->fields[i]->length;
+		field_length = table->fields[i]->length;
 		switch (field_length-1)
 		{
 			case DB_LEN8:
-			 	*((char  *)(row+tot_length))=file->fields[i]->buffer[n];
+			 	*((char  *)(row+tot_length))=table->fields[i]->buffer[n];
 				tot_length+=1;
 			break;
 
 			case DB_LEN16:
-				*((short  *)(row+tot_length))=file->fields[i]->buffer[n];
+				*((short  *)(row+tot_length))=table->fields[i]->buffer[n];
 				tot_length+=2;
 			break;
 
 			case DB_LEN32:
-				*((int  *)(row+tot_length))=file->fields[i]->buffer[n];
+				*((int  *)(row+tot_length))=table->fields[i]->buffer[n];
 
 				tot_length+=3;
 			break;
 
 			case DB_LEN64:
-				*((long  *)(row+tot_length))=file->fields[i]->buffer[n];
+				*((long  *)(row+tot_length))=table->fields[i]->buffer[n];
 				tot_length+=4;
 			break;
 				
@@ -718,7 +869,7 @@ Field * DBField_Create(char *fieldname,char size,char mantisa)
 }
 
 
- Header * DBHeader_Create()
+Header * DBHeader_Create()
 {
 	Header *fh;
 	fh = (Header*)malloc(sizeof(Header));
@@ -727,10 +878,11 @@ Field * DBField_Create(char *fieldname,char size,char mantisa)
 	return fh;
 }
 
- void DBHeader_Free(Header *header)
+void DBHeader_Free(Header *header)
 {
 	free(header);
 }
+
 char DBHeader_AddField(unsigned int fileID,Field *field)
 {
 	int n;
@@ -742,11 +894,11 @@ char DBHeader_AddField(unsigned int fileID,Field *field)
 		return ERR;
 	}
 	
-	n = fileRecords[fileIndex].file.header.nFields;
+	n = fileRecords[fileIndex].table.header.nFields;
 
 	
-	fileRecords[fileIndex].file.header.nFields++;
-	fileRecords[fileIndex].file.fields[n] = field;
+	fileRecords[fileIndex].table.header.nFields++;
+	fileRecords[fileIndex].table.fields[n] = field;
 
 
 
@@ -764,7 +916,7 @@ char DB_WriteHeader(unsigned int fileID)
 		DB_SetLastError(0);
 		return ERR;
 	}
-	fwrite(&fileRecords[fileIndex].file.header,sizeof(struct _Header),1,fileRecords[fileIndex].fP);  
+	fwrite(&fileRecords[fileIndex].table.header,sizeof(struct _Header),1,fileRecords[fileIndex].fP);  
 	return OK;
 
 }
@@ -780,7 +932,7 @@ char DBFile_ReadHeader_old1(int fileID)
 		return ERR;
 	}
 	fseek ( fileRecords[fileIndex].fP, 0 , SEEK_SET);
-	fread (&fileRecords[fileIndex].file.header,sizeof(struct _Header),1,fileRecords[fileIndex].fP);  
+	fread (&fileRecords[fileIndex].table.header,sizeof(struct _Header),1,fileRecords[fileIndex].fP);  
 	return OK;
 
 }
@@ -789,7 +941,7 @@ char DBFile_ReadHeader_old1(int fileID)
 
 {
 	fseek ( fileRecord->fP, 0 , SEEK_SET);
-	fread (&fileRecord->file.header,sizeof(struct _Header),1,fileRecord->fP);  
+	fread (&fileRecord->table.header,sizeof(struct _Header),1,fileRecord->fP);  
 	return OK;
 
 }
@@ -801,14 +953,14 @@ char DBFile_ReadHeader_old1(int fileID)
 	fseek ( fileRecord->fP, sizeof(Header) , SEEK_SET);
 
 	// red fields
-	for (i=0;i<fileRecord->file.header.nFields;i++)
+	for (i=0;i<fileRecord->table.header.nFields;i++)
 	{
 		// allocate place
-		fileRecord->file.fields[i] = (Field*)malloc(sizeof(Field));
+		fileRecord->table.fields[i] = (Field*)malloc(sizeof(Field));
 		// read from file
-		fread(fileRecord->file.fields[i],sizeof(Field),1,fileRecord->fP); 
+		fread(fileRecord->table.fields[i],sizeof(Field),1,fileRecord->fP); 
 		// set hash key 
-		fileRecord->file.fields[i]->id = FileRecord_HashCoding(fileRecord->file.fields[i]->name);
+		fileRecord->table.fields[i]->id = FileRecord_HashCoding(fileRecord->table.fields[i]->name);
 	
 	}
 	return OK;
@@ -829,14 +981,14 @@ char DBFile_ReadHeader_old1(int fileID)
 	fseek ( fileRecords[fileIndex].fP, sizeof(Header) , SEEK_SET);
 
 	// red fields
-	for (i=0;i<fileRecords[fileIndex].file.header.nFields;i++)
+	for (i=0;i<fileRecords[fileIndex].table.header.nFields;i++)
 	{
 		// allocate place
-		fileRecords[fileIndex].file.fields[i] = (Field*)malloc(sizeof(Field*));
+		fileRecords[fileIndex].table.fields[i] = (Field*)malloc(sizeof(Field*));
 		// read from file
-		fread(fileRecords[fileIndex].file.fields[i],sizeof(Field),1,fileRecords[fileIndex].fP); 
+		fread(fileRecords[fileIndex].table.fields[i],sizeof(Field),1,fileRecords[fileIndex].fP); 
 		// set hash key 
-		fileRecords[fileIndex].file.fields[i]->id = FileRecord_HashCoding(fileRecords[fileIndex].file.fields[i]->name);
+		fileRecords[fileIndex].table.fields[i]->id = FileRecord_HashCoding(fileRecords[fileIndex].table.fields[i]->name);
 	
 	}
 	return OK;
@@ -854,9 +1006,9 @@ char DB_WriteFields(unsigned int fileID)
 		DB_SetLastError(0);
 		return ERR;
 	}
-	for (i=0;i<fileRecords[0].file.header.nFields;i++)
+	for (i=0;i<fileRecords[0].table.header.nFields;i++)
 	{
-		fwrite(fileRecords[fileIndex].file.fields[i],sizeof(Field),1,fileRecords[fileIndex].fP);  
+		fwrite(fileRecords[fileIndex].table.fields[i],sizeof(Field),1,fileRecords[fileIndex].fP);  
 		
 	}
 	return OK;

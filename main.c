@@ -18,7 +18,7 @@
 #include "db.h"
 #include "dbfile.h"
 
-#define BUF_SIZE 100
+#define BUF_SIZE 20000
 //void writefloat(float v, FILE *f) {
 //
  //fwrite((void*)(&v), sizeof(v), 1, f);
@@ -86,37 +86,45 @@ void addData()
 	for (i=0;i<BUF_SIZE;i++)
 	{
 		buf1[i]=i;
-		buf2[i]=i*10;//ff
+		buf2[i]=i*2;//ff
 	}
 	fileid = DB_Open("/home/yair/junk.mbt");
 	
 	DB_SetColumn(fileid,"EUR_USD",0);
 	DB_SetColumn(fileid,"EUR_CAD",1);
-	DB_SetFilePointer(fileid,100);
+////	DB_SetFilePointer(fileid,100);
 //	DB_ReadBuffer(fileid);
 
 
 	DB_WriteColumn(0,buf1,BUF_SIZE,0);
 	DB_WriteColumn(1,buf2,BUF_SIZE,0);
 
-	DB_WriteBuffer(fileid);
+////	DB_WriteBuffer(fileid);
 	DB_Close(fileid);
 	
 }
+#define BUF_SIZE1 120
+#define BUF_SIZE2 2500
+
 void readData()
 {
 	FILE_ID fileid;
-	float buf1[BUF_SIZE];
-	float buf2[BUF_SIZE];
+	
+	float buf1[BUF_SIZE1];
+	float buf2[BUF_SIZE2];
+	float buf3[BUF_SIZE1];
+
 //	int i;
 	fileid = DB_Open("/home/yair/junk.mbt");
 	
-	DB_SetColumn(fileid,"EUR_USD",0);
-	DB_SetColumn(fileid,"EUR_CAD",1);
-	DB_SetFilePointer(fileid,90);
-	DB_ReadBuffer(fileid);
-	DB_ReadColumn(1,buf1,BUF_SIZE,10);
-	DB_ReadColumn(0,buf2,BUF_SIZE,-10);
+	DB_SetColumn(fileid,"EUR_USD",2);
+	DB_SetColumn(fileid,"EUR_CAD",3);
+////	DB_SetFilePointer(fileid,100);
+//	DB_ReadBuffer(fileid);
+	DB_ReadColumn(2,buf1,BUF_SIZE1,2800);
+	DB_ReadColumn(3,buf2,BUF_SIZE2,2900);
+
+	DB_ReadColumn(3,buf3,BUF_SIZE1,1500);
 	DB_Close(fileid);
 
 }
@@ -163,9 +171,9 @@ int main()
 	readData();
 
 
-	File_Open(&fileClass,"/home/yair/junk.mbt");
-	File_SetColum(&fileClass,"EUR_USD",0);
-	File_SetColum(&fileClass,"EUR_CAD",1);
+//	File_Open(&fileClass,"/home/yair/junk.mbt");
+//	File_SetColum(&fileClass,"EUR_USD",0);
+//	File_SetColum(&fileClass,"EUR_CAD",1);
 
 
 

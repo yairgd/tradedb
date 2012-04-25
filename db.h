@@ -1,5 +1,4 @@
-/*
- * =====================================================================================
+/* =====================================================================================
  *
  *       Filename:  . db.h
  *
@@ -74,20 +73,27 @@ typedef struct _Header {
    unsigned char nFields;
 }Header;
 
-typedef struct _File {
+typedef struct _Table {
    Header header;
    Field *fields[100];
   // void *row;
    int row_length; 
-}File;
+}Table;
 
 typedef struct _FileRecord {
-	File file;
+	Table table;
 	FILE *fP;
 	int filePointer;
 //	float **buffer;
 
 } FileRecord;
+
+typedef struct _WorkingFields {
+	FileRecord *fileRecord;
+	Field *field;
+
+} WorkingFields;
+
 
 //unsigned int FileRecord_HashCoding(char  *str);
 //int FileRecord_GetIndexByID(int id);
@@ -107,21 +113,21 @@ FILE_ID DB_Open(char *filename);
 FILE_ID DB_Create(char *filename);
 char DB_SetFilePointer(FILE_ID fileid,int fileP);
 char DB_ReadBuffer(FILE_ID fileid);
-char DB_WriteBuffer(FILE_ID fileid);
+//char DB_WriteBuffer(FILE_ID fileid);
 char DB_WriteHeader(unsigned int hashCode);
-char DB_Close(int hashCode);
+char DB_Close(unsigned int hashCode);
 Header * DB_GetHeader(unsigned int fileID);
 char DB_WriteFields(unsigned int fileID);
- char DBFile_Init(File *file);
- char DBFile_Free(File *file);
- void DBFile_SetZeros(File *file);
- Field *DBFile_GetFieldByName(File *file,char *fielName);
+ char DBTable_Init(Table *table);
+ char DBTable_Free(Table *table);
+ void DBTable_SetZeros(Table *table);
+ Field *DBTable_GetFieldByName(Table *table,char *fielName);
 
 //static char DBFile_GetInfo(int hashCode, Header *fh);
 //char DBFile_ReadRow(	File *file, int idx );
-char DBFile_ReadRow(File *file,int i_g_buffer);
+char DBTable_ReadRow(Table *table,int i_g_buffer);
 
-char DBFile_WriteRow(File *file,int idx);
+char DBTable_WriteRow(Table *table,int idx);
 
 //char DBFile_nSetPointer(int fileID,int idx);
 //static char DBFile_WriteRecord(unsigned char s );
@@ -135,7 +141,7 @@ char DBFileRecord_ReadBuffer(FileRecord *fileRecord);
 
 char DBFileRecord_SetPointer(FileRecord *fileRecord, int p);
 char DBFileRecord_WriteBuffer(FileRecord *fileRecord);
-
+FileRecord *DBFileRecord_GetRecord(FILE_ID fileid);
 
 char DBFileRecord_AddZeroRows(FileRecord *fileRecord,int nRows);
 
@@ -146,7 +152,7 @@ char DBFileRecord_AddZeroRows(FileRecord *file,int nRows);
 //char DBFile_SetHeader(fileID);
 
 char DBFile_AddZeroRows(FileRecord *file,int nRows);
-int DBFile_GetFirstEntry(File *file);
+int DBFile_GetFirstEntry(Table *table);
 
 //int DBField_Init(Field *field);
 Field* DBField_Create(char *,char,char);
@@ -155,14 +161,15 @@ Field* DBField_Create(char *,char,char);
 //    void DBField_Delete(Field *);
  Field * DBField_GetByName(unsigned int fileID, char *name);
 char DBField_Free(Field *field);
+int DBField_WriteBuffer(Field *field,float *buffer,int buffer_size,int bufferPlace);
 
-Field * DBField_GetByIndex(unsigned int fileID,int idx);
+Field * DBField_GetByIndex(unsigned int fileID,int nidx);
 Header * DBHeader_Create();
  char DBHeader_AddField(unsigned int fileID,Field *field);
 void DBHeader_Free(Header *header);
 
 
-
+WorkingFields *GetWorkingField(int idx);
 
 
 
